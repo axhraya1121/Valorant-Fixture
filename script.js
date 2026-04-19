@@ -27,6 +27,8 @@ const masterResetBtn  = document.getElementById('btn-master-reset');
 let currentMatches = [];   // first-round matches for clipboard/PDF
 let bracketRounds  = [];   // all rounds for bracket rendering
 let orderedTeams = [];
+let currentChampion = '';  // champion team name
+let thirdPlaceMatch = { teamA: 'TBD', teamB: 'TBD', winner: null }; // 3rd place playoff
 
 /* ================================================
    UTILITIES
@@ -74,13 +76,13 @@ import { getFirestore, doc, setDoc, onSnapshot, deleteDoc }
   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
 const firebaseConfig = {
-  apiKey: "AIzaSyDLgPSmyw3GFcCCePDmFNNzc0AR77KF8oA",
-  authDomain: "valohaiyaar.firebaseapp.com",
-  projectId: "valohaiyaar",
-  storageBucket: "valohaiyaar.firebasestorage.app",
-  messagingSenderId: "523837926192",
-  appId: "1:523837926192:web:216b35b3754baa9c7ef6f5",
-  measurementId: "G-N7TYCPW4G3"
+  apiKey: "AIzaSyCc_cIErqd8beQifJDCyJN6rzM0C6s--MU",
+  authDomain: "grafestvalorant.firebaseapp.com",
+  projectId: "grafestvalorant",
+  storageBucket: "grafestvalorant.firebasestorage.app",
+  messagingSenderId: "744879412638",
+  appId: "1:744879412638:web:5fac7c66303a23da22f28f",
+  measurementId: "G-ZHJ30FDSGE"
 };
 
 const firebaseApp = initializeApp(firebaseConfig);
@@ -100,6 +102,8 @@ function saveState() {
       rounds: JSON.stringify(bracketRounds),
       matches: JSON.stringify(currentMatches),
       orderedTeams: JSON.stringify(orderedTeams),
+      champion: currentChampion || '',
+      thirdPlaceMatch: JSON.stringify(thirdPlaceMatch),
       updatedAt: Date.now()
     };
     try {
@@ -121,9 +125,10 @@ function applyState(state) {
   if (teamCountInput && state.count) teamCountInput.value = state.count;
   // Parse back from JSON strings (Firestore) or use directly (localStorage fallback)
   try {
-    bracketRounds  = typeof state.rounds       === 'string' ? JSON.parse(state.rounds)       : (state.rounds       || []);
-    currentMatches = typeof state.matches      === 'string' ? JSON.parse(state.matches)      : (state.matches      || []);
-    orderedTeams   = typeof state.orderedTeams === 'string' ? JSON.parse(state.orderedTeams) : (state.orderedTeams || []);
+    bracketRounds    = typeof state.rounds          === 'string' ? JSON.parse(state.rounds)          : (state.rounds          || []);
+    currentMatches   = typeof state.matches         === 'string' ? JSON.parse(state.matches)         : (state.matches         || []);
+    orderedTeams     = typeof state.orderedTeams    === 'string' ? JSON.parse(state.orderedTeams)    : (state.orderedTeams    || []);
+    thirdPlaceMatch  = typeof state.thirdPlaceMatch === 'string' ? JSON.parse(state.thirdPlaceMatch) : (state.thirdPlaceMatch || { teamA: 'TBD', teamB: 'TBD', winner: null });
   } catch(e) {
     console.error('State parse error:', e);
     return;
@@ -132,6 +137,19 @@ function applyState(state) {
   const emptyState = document.getElementById('empty-state');
   if (emptyState) emptyState.style.display = 'none';
   renderBracket();
+
+  // Show or clear champion/leaderboard overlay based on saved state
+  if (state.champion && state.champion.startsWith('__leaderboard__')) {
+    const champName = state.champion.replace('__leaderboard__', '');
+    currentChampion = state.champion;
+    showLeaderboard(champName, state.eventName || '');
+  } else if (state.champion) {
+    currentChampion = state.champion;
+    showChampionOverlay(state.champion);
+  } else {
+    currentChampion = '';
+    removeChampionOverlay();
+  }
 }
 
 // Real-time listener — fires instantly on every device when Firestore updates
@@ -140,9 +158,19 @@ function startRealtimeSync() {
     if (snapshot.exists()) {
       applyState(snapshot.data());
     } else {
-      const emptyState = document.getElementById('empty-state');
-      if (emptyState) emptyState.style.display = 'block';
+      // Document deleted — reset public view back to STAND BY
+      bracketRounds  = [];
+      currentMatches = [];
+      orderedTeams   = [];
+      currentChampion = '';
+      removeChampionOverlay();
       hideBracket();
+      const emptyState = document.getElementById('empty-state');
+      if (emptyState) {
+        emptyState.style.display = 'block';
+      }
+      // Reset the loaded/initialized flags so bracket animates in fresh next time
+      bracketWrapper.classList.remove('loaded', 'initialized');
     }
   }, (err) => {
     console.error('Firestore listener error:', err);
@@ -443,6 +471,7 @@ buildBracket(orderedTeams);
 function buildBracket(teams) {
   bracketRounds = [];
   currentMatches = [];
+  thirdPlaceMatch = { teamA: 'TBD', teamB: 'TBD', winner: null };
 
   const n = teams.length;
 
@@ -541,7 +570,7 @@ function renderBracket() {
 
     round.forEach((match, mIdx) => {
       const matchEl = document.createElement('div');
-      matchEl.className = 'bracket-match';
+      matchEl.className = 'bracket-match' + (rIdx === totalRounds - 1 ? ' finals-match' : '');
       if (rIdx === 0 && isAdmin) {
         matchEl.setAttribute('draggable', 'true');
       }
@@ -551,6 +580,8 @@ function renderBracket() {
       // Reduced delay so it doesn't animate endlessly on re-renders, or rely on CSS class
       matchEl.style.animation = 'none'; // We'll keep it fast for interactivity
 
+      const isFinalRound = rIdx === totalRounds - 1;
+
       const isTBD = (rIdx > 0);
       let teamAClass = match.teamA === 'TBD' ? 'bracket-team tbd' : 'bracket-team';
       let teamBClass = match.teamB === 'TBD' ? 'bracket-team tbd' : 'bracket-team';
@@ -558,13 +589,13 @@ function renderBracket() {
       if (match.teamA === 'BYE') teamAClass += ' bye';
       if (match.teamB === 'BYE') teamBClass += ' bye';
 
-      // Visual States
+      // Visual States — in Finals both teams stay clickable (no eliminated class)
       if (match.winner === 'teamA') {
         teamAClass += ' winner';
-        if (match.teamB !== null && match.teamB !== 'TBD') teamBClass += ' eliminated';
+        if (!isFinalRound && match.teamB !== null && match.teamB !== 'TBD') teamBClass += ' eliminated';
       } else if (match.winner === 'teamB') {
         teamBClass += ' winner';
-        if (match.teamA !== null && match.teamA !== 'TBD') teamAClass += ' eliminated';
+        if (!isFinalRound && match.teamA !== null && match.teamA !== 'TBD') teamAClass += ' eliminated';
       }
 
       const teamAHTML = `
@@ -618,6 +649,61 @@ function renderBracket() {
       bracketDiv.appendChild(connCol);
     }
   });
+
+  // ——— Third Place Match Column ———
+  // Only show if bracket has at least semi-finals (4+ teams)
+  if (bracketRounds.length >= 2) {
+    const tpSpacer = document.createElement('div');
+    tpSpacer.style.width = '32px';
+    bracketDiv.appendChild(tpSpacer);
+
+    const tpCol = document.createElement('div');
+    tpCol.className = 'bracket-round';
+
+    const tpTitle = document.createElement('div');
+    tpTitle.className = 'round-title third-place-title';
+    tpTitle.textContent = '3rd Place';
+    tpCol.appendChild(tpTitle);
+
+    const tpContainer = document.createElement('div');
+    tpContainer.className = 'round-matches';
+
+    const tpEl = document.createElement('div');
+    tpEl.className = 'bracket-match third-place-match';
+    tpEl.setAttribute('data-round', 'third');
+    tpEl.setAttribute('data-match', '0');
+    tpEl.style.animation = 'none';
+
+    const tpA = thirdPlaceMatch.teamA || 'TBD';
+    const tpB = thirdPlaceMatch.teamB || 'TBD';
+
+    let tpAClass = tpA === 'TBD' ? 'bracket-team tbd' : 'bracket-team';
+    let tpBClass = tpB === 'TBD' ? 'bracket-team tbd' : 'bracket-team';
+
+    if (thirdPlaceMatch.winner === 'teamA') {
+      tpAClass += ' winner';
+      if (tpB !== 'TBD') tpBClass += ' eliminated';
+    } else if (thirdPlaceMatch.winner === 'teamB') {
+      tpBClass += ' winner';
+      if (tpA !== 'TBD') tpAClass += ' eliminated';
+    }
+
+    tpEl.innerHTML = `
+      <div class="${tpAClass}" data-round="third" data-match="0" data-teampos="teamA">
+        <span class="seed"></span>
+        <span class="bracket-team-name" data-name="${escapeHtml(tpA)}">${escapeHtml(tpA)}</span>
+      </div>
+      <div class="bracket-vs">VS</div>
+      <div class="${tpBClass}" data-round="third" data-match="0" data-teampos="teamB">
+        <span class="seed"></span>
+        <span class="bracket-team-name" data-name="${escapeHtml(tpB)}">${escapeHtml(tpB)}</span>
+      </div>
+    `;
+
+    tpContainer.appendChild(tpEl);
+    tpCol.appendChild(tpContainer);
+    bracketDiv.appendChild(tpCol);
+  }
 
   bracketWrapper.style.display = 'block';
 
@@ -694,36 +780,65 @@ bracketDiv?.addEventListener('click', (e) => {
     return;
   }
 
-  const rIdx = parseInt(teamEl.getAttribute('data-round'), 10);
+  const rIdx = teamEl.getAttribute('data-round');
   const mIdx = parseInt(teamEl.getAttribute('data-match'), 10);
-  const teamPos = teamEl.getAttribute('data-teampos'); // 'teamA' or 'teamB'
+  const teamPos = teamEl.getAttribute('data-teampos');
 
-  // Cannot advance finals
-  if (rIdx >= bracketRounds.length - 1) return;
+  // ——— Third Place Match click ———
+  if (rIdx === 'third') {
+    if (thirdPlaceMatch.teamA === 'TBD' || thirdPlaceMatch.teamB === 'TBD') return;
+    if (thirdPlaceMatch.winner === teamPos) {
+      thirdPlaceMatch.winner = null;
+      showToast('3rd place result reset.');
+    } else {
+      thirdPlaceMatch.winner = teamPos;
+      const winnerName = thirdPlaceMatch[teamPos];
+      showToast(`🥉 ${winnerName} finishes 3rd!`);
+    }
+    saveState();
+    renderBracket();
+    return;
+  }
 
-  const match = bracketRounds[rIdx][mIdx];
+  const rIdxNum = parseInt(rIdx, 10);
+  const match = bracketRounds[rIdxNum][mIdx];
   const advancingTeam = match[teamPos];
+  const isFinals = rIdxNum === bracketRounds.length - 1;
 
   // If same team clicked again → UNDO
-if (match.winner === teamPos) {
-  match.winner = null;
-  resetMatch(rIdx, mIdx);
-  return;
-}
+  if (match.winner === teamPos) {
+    match.winner = null;
+    if (isFinals) {
+      clearChampion();
+    } else {
+      resetMatch(rIdxNum, mIdx);
+    }
+    return;
+  }
 
-// If switching winner → clear previous
-if (match.winner && match.winner !== teamPos) {
-  resetMatch(rIdx, mIdx);
-}
+  // If switching winner → clear previous
+  if (match.winner && match.winner !== teamPos) {
+    if (isFinals) {
+      clearChampion();
+    } else {
+      resetMatch(rIdxNum, mIdx);
+    }
+  }
 
-// Set winner
-match.winner = teamPos;
+  // Set winner
+  match.winner = teamPos;
 
-// Advance normally
-advanceTeam(rIdx, mIdx, advancingTeam, teamPos);
+  if (isFinals) {
+    // 🏆 Champion!
+    triggerChampion(advancingTeam);
+    saveState();
+    renderBracket();
+  } else {
+    advanceTeam(rIdxNum, mIdx, advancingTeam, teamPos);
+  }
 });
 
-function advanceTeam(rIdx, mIdx, teamName, teamPos) {
+function advanceTeam(rIdx, mIdx, winnerName, teamPos) {
   const nextRoundIdx = rIdx + 1;
   if (nextRoundIdx >= bracketRounds.length) return;
 
@@ -731,11 +846,26 @@ function advanceTeam(rIdx, mIdx, teamName, teamPos) {
   const isTeamA = mIdx % 2 === 0;
 
   if (isTeamA) {
-    bracketRounds[nextRoundIdx][nextMatchIdx].teamA = teamName;
+    bracketRounds[nextRoundIdx][nextMatchIdx].teamA = winnerName;
   } else {
-    bracketRounds[nextRoundIdx][nextMatchIdx].teamB = teamName;
+    bracketRounds[nextRoundIdx][nextMatchIdx].teamB = winnerName;
   }
-  
+
+  // If this is a semi-final (feeds directly into Finals), send loser to 3rd place match
+  const isSemiFinal = nextRoundIdx === bracketRounds.length - 1;
+  if (isSemiFinal) {
+    const match = bracketRounds[rIdx][mIdx];
+    const loserName = teamPos === 'teamA' ? match.teamB : match.teamA;
+    if (loserName && loserName !== 'TBD' && loserName !== 'BYE') {
+      if (isTeamA) {
+        thirdPlaceMatch.teamA = loserName;
+      } else {
+        thirdPlaceMatch.teamB = loserName;
+      }
+      thirdPlaceMatch.winner = null;
+    }
+  }
+
   saveState();
   renderBracket();
 }
@@ -758,6 +888,17 @@ function resetMatch(rIdx, mIdx) {
     nextMatch.teamA = null;
   } else {
     nextMatch.teamB = null;
+  }
+
+  // If resetting a semi-final, also clear the corresponding 3rd place slot
+  const isSemiFinal = nextRIdx === bracketRounds.length - 1;
+  if (isSemiFinal) {
+    if (isTeamA) {
+      thirdPlaceMatch.teamA = 'TBD';
+    } else {
+      thirdPlaceMatch.teamB = 'TBD';
+    }
+    thirdPlaceMatch.winner = null;
   }
 
   // Cascade the deletion down the bracket if they advanced multiple rounds before the reset
@@ -784,6 +925,183 @@ function resetMatch(rIdx, mIdx) {
   showToast('Match properly reset!');
 }
 
+/* ================================================
+   CHAMPION CELEBRATION
+   ================================================ */
+
+function triggerChampion(teamName) {
+  currentChampion = teamName;
+  showChampionOverlay(teamName);
+  saveStateImmediate();
+}
+
+function clearChampion() {
+  currentChampion = '';
+  removeChampionOverlay();
+  saveStateImmediate();
+}
+
+async function saveStateImmediate() {
+  if (bracketRounds.length === 0) return;
+  clearTimeout(_saveTimer);
+  const state = {
+    eventName: eventNameInput ? eventNameInput.value : '',
+    count: teamCountInput ? teamCountInput.value : '',
+    rounds: JSON.stringify(bracketRounds),
+    matches: JSON.stringify(currentMatches),
+    orderedTeams: JSON.stringify(orderedTeams),
+    champion: currentChampion || '',
+    thirdPlaceMatch: JSON.stringify(thirdPlaceMatch),
+    updatedAt: Date.now()
+  };
+  try {
+    await setDoc(STATE_DOC, state);
+  } catch (err) {
+    console.error('Firestore save failed:', err);
+    localStorage.setItem('valTournamentState', JSON.stringify(state));
+  }
+}
+
+function showChampionOverlay(teamName) {
+  removeChampionOverlay();
+
+  const eventName = (eventNameInput ? eventNameInput.value : '') ||
+                    (document.getElementById('public-title') ? document.getElementById('public-title').textContent : '') ||
+                    'GRAFEST VALORANT';
+
+  const overlay = document.createElement('div');
+  overlay.id = 'champion-overlay';
+  overlay.innerHTML = `
+    <div class="champion-particles" id="champion-particles"></div>
+    <div class="champion-content" id="champion-content">
+      <div class="champion-trophy">🏆</div>
+      <div class="champion-label">CHAMPION</div>
+      <div class="champion-name">${escapeHtml(teamName)}</div>
+      <div class="champion-event">${escapeHtml(eventName)}</div>
+      <div class="champion-countdown" id="champion-countdown">Leaderboard in <span id="countdown-num">10</span>s</div>
+      ${document.getElementById('team-input-card') ? `<button class="btn btn-secondary champion-close" id="champion-close-btn">✕ Dismiss</button>` : ''}
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  // Spawn confetti particles
+  const container = document.getElementById('champion-particles');
+  for (let i = 0; i < 80; i++) {
+    const p = document.createElement('span');
+    p.className = 'champ-particle';
+    p.style.left = Math.random() * 100 + 'vw';
+    p.style.animationDelay = (Math.random() * 3) + 's';
+    p.style.animationDuration = (2.5 + Math.random() * 2.5) + 's';
+    p.style.background = ['#FF4655','#ffffff','#17d8d0','#FFD700','#ff7a83'][Math.floor(Math.random()*5)];
+    p.style.width = p.style.height = (6 + Math.random() * 8) + 'px';
+    p.style.borderRadius = Math.random() > 0.5 ? '50%' : '2px';
+    container.appendChild(p);
+  }
+
+  // Dismiss button (admin only)
+  const closeBtn = document.getElementById('champion-close-btn');
+  if (closeBtn) {
+    closeBtn.addEventListener('click', () => {
+      clearInterval(countdownInterval);
+      clearTimeout(transitionTimeout);
+      clearChampion();
+    });
+  }
+
+  // Trigger animation
+  requestAnimationFrame(() => overlay.classList.add('visible'));
+
+  // Countdown then transition to leaderboard
+  let secs = 10;
+  const countdownEl = document.getElementById('countdown-num');
+  const countdownInterval = setInterval(() => {
+    secs--;
+    if (countdownEl) countdownEl.textContent = secs;
+    if (secs <= 0) clearInterval(countdownInterval);
+  }, 1000);
+
+  const transitionTimeout = setTimeout(() => {
+    showLeaderboard(teamName, eventName);
+    // Save leaderboard state so public page transitions too
+    currentChampion = '__leaderboard__' + teamName;
+    saveStateImmediate();
+  }, 10000);
+
+  // Store refs so dismiss can cancel them
+  overlay._countdownInterval = countdownInterval;
+  overlay._transitionTimeout = transitionTimeout;
+}
+
+function showLeaderboard(champion, eventName) {
+  // Compute 2nd and 3rd place
+  const finalsRound = bracketRounds[bracketRounds.length - 1];
+  const finalsMatch = finalsRound ? finalsRound[0] : null;
+  const runnerUp = finalsMatch
+    ? (finalsMatch.winner === 'teamA' ? finalsMatch.teamB : finalsMatch.teamA)
+    : 'TBD';
+  const thirdPlace = thirdPlaceMatch.winner
+    ? thirdPlaceMatch[thirdPlaceMatch.winner]
+    : 'TBD';
+
+  removeChampionOverlay();
+
+  const overlay = document.createElement('div');
+  overlay.id = 'champion-overlay';
+  overlay.innerHTML = `
+    <div class="champion-particles" id="champion-particles"></div>
+    <div class="leaderboard-content">
+      <div class="leaderboard-title">${escapeHtml(eventName || 'GRAFEST VALORANT')}</div>
+      <div class="leaderboard-subtitle">FINAL STANDINGS</div>
+      <div class="leaderboard-podium">
+        <div class="podium-slot podium-second">
+          <div class="podium-medal">🥈</div>
+          <div class="podium-rank">2ND</div>
+          <div class="podium-name">${escapeHtml(runnerUp)}</div>
+          <div class="podium-block second-block"></div>
+        </div>
+        <div class="podium-slot podium-first">
+          <div class="podium-medal">🥇</div>
+          <div class="podium-rank">1ST</div>
+          <div class="podium-name">${escapeHtml(champion)}</div>
+          <div class="podium-block first-block"></div>
+        </div>
+        <div class="podium-slot podium-third">
+          <div class="podium-medal">🥉</div>
+          <div class="podium-rank">3RD</div>
+          <div class="podium-name">${escapeHtml(thirdPlace)}</div>
+          <div class="podium-block third-block"></div>
+        </div>
+      </div>
+      ${document.getElementById('team-input-card') ? `<button class="btn btn-secondary champion-close" id="leaderboard-close-btn" style="margin-top:30px;">✕ Dismiss</button>` : ''}
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  // Re-spawn particles
+  const container = document.getElementById('champion-particles');
+  for (let i = 0; i < 60; i++) {
+    const p = document.createElement('span');
+    p.className = 'champ-particle';
+    p.style.left = Math.random() * 100 + 'vw';
+    p.style.animationDelay = (Math.random() * 4) + 's';
+    p.style.animationDuration = (3 + Math.random() * 3) + 's';
+    p.style.background = ['#FFD700','#C0C0C0','#CD7F32','#ffffff','#FF4655'][Math.floor(Math.random()*5)];
+    p.style.width = p.style.height = (6 + Math.random() * 10) + 'px';
+    p.style.borderRadius = Math.random() > 0.5 ? '50%' : '2px';
+    container.appendChild(p);
+  }
+
+  requestAnimationFrame(() => overlay.classList.add('visible'));
+
+  const closeBtn = document.getElementById('leaderboard-close-btn');
+  if (closeBtn) closeBtn.addEventListener('click', () => clearChampion());
+}
+
+function removeChampionOverlay() {
+  const existing = document.getElementById('champion-overlay');
+  if (existing) existing.remove();
+}
+
 function hideBracket() {
   bracketWrapper.style.display = 'none';
   bracketDiv.innerHTML = '';
@@ -791,9 +1109,12 @@ function hideBracket() {
   bracketRounds = [];
 }
 
-masterResetBtn?.addEventListener('click', () => {
+masterResetBtn?.addEventListener('click', async () => {
   if (!confirm('Are you sure you want to permanently clear the current active tournament bracket? This cannot be undone.')) return;
-  deleteDoc(STATE_DOC).catch(() => {});
+  currentChampion = '';
+  thirdPlaceMatch = { teamA: 'TBD', teamB: 'TBD', winner: null };
+  removeChampionOverlay();
+  try { await deleteDoc(STATE_DOC); } catch(e) {}
   localStorage.removeItem('valTournamentState');
   location.reload();
 });
@@ -802,15 +1123,17 @@ masterResetBtn?.addEventListener('click', () => {
    RESET
    ================================================ */
 
-resetBtn?.addEventListener('click', () => {
+resetBtn?.addEventListener('click', async () => {
   if (!confirm('Are you sure you want to reset everything? This will wipe the tournament.')) return;
-
   teamCountInput.value = '16';
   teamFieldsDiv.innerHTML = '';
   teamInputCard.style.display = 'none';
   hideBracket();
   clearError();
-  deleteDoc(STATE_DOC).catch(() => {});
+  currentChampion = '';
+  thirdPlaceMatch = { teamA: 'TBD', teamB: 'TBD', winner: null };
+  removeChampionOverlay();
+  try { await deleteDoc(STATE_DOC); } catch(e) {}
   localStorage.removeItem('valTournamentState');
   showToast('Tournament wiped — ready for new teams!');
 });

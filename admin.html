@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Valorant-themed Tournament Fixture Builder — create knockout brackets with a premium esports UI." />
+  <title>VALORANT Tournament Fixture Builder</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- ======== ADMIN LOGIN OVERLAY ======== -->
+  <div id="login-overlay" style="position:fixed; top:0; left:0; width:100%; height:100%; background:#0f1923; z-index:9999; display:flex; flex-direction:column; align-items:center; justify-content:center;">
+    <h2 style="color:#FF4655; font-family:'Orbitron', sans-serif; letter-spacing:2px;">ADMIN CONTROL PANEL</h2>
+    <input type="text" id="admin-user" class="input-field" placeholder="Username" style="margin-top:20px; width:300px; text-align:center;" />
+    <input type="password" id="admin-pass" class="input-field" placeholder="Password" style="margin-top:10px; width:300px; text-align:center;" />
+    <button id="btn-login" class="btn btn-primary" style="margin-top:20px; width:300px;">AUTHORIZE</button>
+    <div id="login-error" style="color:#FF4655; margin-top:15px; font-size:14px; display:none; background:rgba(255,0,0,0.1); padding:8px 12px; border-radius:4px;">ACCESS DENIED. INVALID CREDENTIALS.</div>
+  </div>
+  <script>
+    if(sessionStorage.getItem('adminLoggedIn') === 'true') {
+      document.getElementById('login-overlay').style.display = 'none';
+    }
+    document.getElementById('btn-login').addEventListener('click', () => {
+      const u = document.getElementById('admin-user').value;
+      const p = document.getElementById('admin-pass').value;
+      if(u === 'PranavMaheshwari123' && p === 'Pranav@123') {
+        sessionStorage.setItem('adminLoggedIn', 'true');
+        document.getElementById('login-overlay').style.display = 'none';
+      } else {
+        document.getElementById('login-error').style.display = 'block';
+      }
+    });
+  </script>
+
+  <!-- Background layer -->
+  <div class="bg-layer"></div>
+
+  <!-- CSS-only floating particles -->
+  <div class="particles">
+    <span></span><span></span><span></span><span></span>
+    <span></span><span></span><span></span><span></span>
+  </div>
+
+  <!-- ======== MAIN CONTAINER ======== -->
+  <div class="container">
+
+    <!-- Header -->
+    <header class="header">
+      <div class="logo-row">
+        <img src="Grafest_Logo.png" alt="Grafest Logo" class="header-logo" />
+        <span class="logo-divider"></span>
+        <img src="Valorant_logo_-_pink_color_version.svg.png" alt="Valorant Logo" class="header-logo valorant-logo" />
+      </div>
+      <h1>Valorant Tournament</h1>
+      <p class="subtitle">Fixture Builder</p>
+    </header>
+
+    <!-- ——— STEP 1: Team Count ——— -->
+    <section class="glass-card" id="count-card">
+      <h2>Tournament Setup</h2>
+      <div class="input-group" style="margin-bottom: 12px;">
+        <input type="text" id="event-name" class="input-field" placeholder="Event Name (e.g. Grafest Valorant Cup)" />
+      </div>
+      <div class="input-group">
+        <input
+          type="number"
+          id="team-count"
+          class="input-field"
+          value="16"
+          placeholder="Number of teams (e.g. 16)"
+          min="2"
+          max="128"
+        />
+        <button class="btn btn-primary" id="btn-set-count">Lock In</button>
+        <button class="btn btn-secondary" id="btn-upload-excel" title="Upload Excel/CSV">
+          <span>📁</span> Upload
+        </button>
+        <input type="file" id="excel-upload" accept=".csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel" style="display:none" />
+      </div>
+      <!-- Error message area -->
+      <div class="error-msg" id="error-msg"></div>
+    </section>
+
+    <!-- ——— STEP 2: Team Names (hidden by default) ——— -->
+    <section class="glass-card" id="team-input-card" style="display:none">
+      <h2>Enter Team Names</h2>
+      <p class="drag-hint" id="drag-hint">⠿ Drag teams to reorder seeding</p>
+      <div id="team-fields"></div>
+      <div class="btn-group">
+        <button class="btn btn-primary" id="btn-generate">
+          <span>⚔</span> Generate Bracket
+        </button>
+        <button class="btn btn-secondary" id="btn-reset">
+          <span>↺</span> Reset
+        </button>
+      </div>
+    </section>
+
+  </div>
+
+  <!-- ——— STEP 3: Bracket Output (full-width) ——— -->
+  <div class="bracket-wrapper" id="bracket-wrapper" style="display:none">
+    <div class="container">
+      <section class="glass-card bracket-card">
+        <h2>Knockout Bracket</h2>
+        <div class="bracket-scroll">
+          <div class="bracket" id="bracket"></div>
+        </div>
+        <div class="action-bar" id="action-bar">
+          <button class="btn btn-primary btn-sm" id="btn-share">
+            <span>🔗</span> Share Link
+          </button>
+          <button class="btn btn-primary btn-sm" id="btn-download-fixtures">
+            <span>📄</span> Download Fixtures
+          </button>
+          <button class="btn btn-primary btn-sm" id="btn-download-bracket">
+            <span>📄</span> Download Bracket
+          </button>
+          <button class="btn btn-secondary btn-sm" id="btn-copy">
+            <span>📋</span> Copy to Clipboard
+          </button>
+          <button class="btn btn-primary btn-sm" id="btn-master-reset" style="background:#FF4655; color:white; border-color:#FF4655; margin-left:auto;">
+            <span>⚠️</span> Reset Tournament
+          </button>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <!-- Toast notification -->
+  <div class="toast" id="toast"></div>
+
+  <!-- SheetJS & jsPDF CDNs -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <!-- App logic -->
+  <script type="module" src="script.js"></script>
+</body>
+</html>
